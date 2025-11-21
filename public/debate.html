@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Debate View</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            background: '#020617',
+            border: 'rgba(148,163,184,0.25)',
+          },
+          boxShadow: {
+            'neon-green': '0 0 25px rgba(34,197,94,0.45)',
+            'neon-pink': '0 0 25px rgba(236,72,153,0.45)',
+          }
+        }
+      }
+    }
+  </script>
+  <script src="./common.js" defer></script>
+  <script defer>
+    document.addEventListener('DOMContentLoaded', () => {
+      requireAuth();
+
+      const urlParams = new URLSearchParams(window.location.search);
+      const debateId = urlParams.get('id');
+
+      const titleEl = document.getElementById('debateTitle');
+      const descEl = document.getElementById('debateDesc');
+      const statsEl = document.getElementById('stats');
+      const forList = document.getElementById('forList');
+      const againstList = document.getElementById('againstList');
+      const addForForm = document.getElementById('addForForm');
+      const addAgainstForm = document.getElementById('addAgainstForm');
+      const backBtn = document.getElementById('backBtn');
+      const exportBtn = document.getElementById('exportBtn');
+
+      backBtn.addEventListener('click', () => {
+        window.location.href = '/index.html';
+      });
+
+      exportBtn.addEventListener('click', () => {
+        const url = `/api/debates/${debateId}/export-xml`;
+        fetch(url, { headers: authHeaders() })
+          .then(res => res.text())
+          .then(xmlText => {
+            const blob = new Blob([xmlText], { type: 'application/xml' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `debate-${debateId}.xml`;
+            a.click();
+          })
+          .catch(() => alert('Failed to export XML'));
+      });
+
+      async function loadDebate() {
+        const res = await fetch(`/api/debates/${debateId}`, { headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.message || 'Failed to load debate');
+          return;
+        }
+
+        titleEl.textContent = data.debate.title;
+        descEl.textContent = data.debate.description || '';
+
+        statsEl.innerHTML = `
+  <div class="flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
+
+    <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/40">
+      <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+      For: <span class="font-semibold">${data.stats.for}</span> |
+      Points: <span class="font-semibold">${data.stats.forPoints}</span>
+    </span>
+
+    <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-pink-500/10 text-pink-300 border border-pink-500/40">
+      <span class="w-1.5 h-1.5 rounded-full bg-pink-400"></span>
+      Against: <span class="font-semibold">${data.stats.against}</span> |
+      Points: <span class="font-semibold">${data.stats.againstPoints}</span>
+    </span>
+
+    <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-900 text-slate-300 border border-border">
+      👥 Participants: <span class="font-semibold">${data.stats.participants}</span>
+    </span>
+
+    <!-- WINNER BADGE HERE -->
+    <span class="
+      inline-flex items-center gap-1 px-2 py-1 rounded-full border 
+      ${data.stats.winner === 'FOR'
+        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-neon-green'
+        : data.stats.winner === 'AGAINST'
+        ? 'bg-pink-500/20 text-pink-300 border-pink-500/40 shadow-neon-pink'
+        : 'bg-slate-700/50 text-slate-300 border border-slate-600'
+      }
+    ">
+      🏆 Winner: <span class="font-bold">${data.stats.winner}</span>
+    </span>
+
+  </div>
+`;
+
+
+
+        forList.innerHTML = '';
+        againstList.innerHTML = '';
+
+        if (!data.arguments.length) {
+          const empty = `<p class="text-xs text-slate-500">No arguments yet. Be the first to add one.</p>`;
+          forList.innerHTML = empty;
+          againstList.innerHTML = empty;
+        }
+
+        data.arguments.forEach(arg => {
+          const li = document.createElement('li');
+          li.className =
+            'relative border border-border bg-slate-950/80 rounded-2xl px-3 py-2.5 mb-2 text-xs text-slate-100 ' +
+            'backdrop-blur hover:border-emerald-500/60 hover:shadow-neon-green transition-all duration-300';
+
+          const sideBadge =
+            arg.side === 'for'
+              ? `<span class="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/40">FOR</span>`
+              : `<span class="px-2 py-0.5 rounded-full text-[10px] bg-pink-500/10 text-pink-300 border border-pink-500/40">AGAINST</span>`;
+
+          li.innerHTML = `
+            <div class="flex items-start justify-between gap-2">
+              <p class="text-[11px] leading-relaxed text-slate-100">
+                ${arg.text}
+              </p>
+              ${sideBadge}
+            </div>
+            <p class="text-[10px] text-slate-500 mt-2 flex items-center justify-between">
+              <span>
+                by <span class="font-medium text-slate-300">${arg.authorName}</span>
+              </span>
+              <span>${new Date(arg.createdAt).toLocaleString()}</span>
+            </p>
+          `;
+
+          if (arg.side === 'for') {
+            forList.appendChild(li);
+          } else {
+            againstList.appendChild(li);
+          }
+        });
+      }
+
+      async function submitArgument(side, form) {
+        const authorName = form.authorName.value.trim();
+        const text = form.text.value.trim();
+        if (!text) return;
+
+        const res = await fetch(`/api/debates/${debateId}/arguments`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ side, text, authorName })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.message || 'Failed to add argument');
+          return;
+        }
+        form.reset();
+        loadDebate();
+      }
+
+      addForForm.addEventListener('submit', e => {
+        e.preventDefault();
+        submitArgument('for', addForForm);
+      });
+
+      addAgainstForm.addEventListener('submit', e => {
+        e.preventDefault();
+        submitArgument('against', addAgainstForm);
+      });
+
+      loadDebate();
+    });
+  </script>
+</head>
+<body class="min-h-screen bg-background text-slate-100 relative overflow-hidden">
+
+  <!-- cyber grid background -->
+  <div class="pointer-events-none fixed inset-0 opacity-40">
+    <div class="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,#020617_1px,transparent_0)] [background-size:30px_30px]"></div>
+    <div class="absolute inset-0 bg-gradient-to-br from-emerald-500/10 via-sky-500/5 to-fuchsia-500/15 mix-blend-screen"></div>
+  </div>
+
+  <div class="relative z-10 flex flex-col min-h-screen">
+    <header class="border-b border-border bg-black/70 backdrop-blur">
+      <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <button id="backBtn"
+            class="inline-flex items-center gap-1 text-[11px] px-3 py-1.5 rounded-full border border-slate-700/80 bg-slate-950/80 text-slate-200 hover:border-emerald-500/70 transition-all">
+            ← Dashboard
+          </button>
+          <div>
+            <h1 class="text-sm font-semibold tracking-tight text-slate-50">
+              Debate Matrix
+            </h1>
+            <p class="text-[11px] text-slate-400">
+              Compare arguments in real-time and export the full debate log.
+            </p>
+          </div>
+        </div>
+        <button id="exportBtn"
+          class="inline-flex items-center gap-1 text-[11px] px-3 py-1.5 rounded-full border border-emerald-500/70
+                 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20 hover:shadow-neon-green transition-all">
+          ⬇ XML Export
+        </button>
+      </div>
+    </header>
+
+    <main class="flex-1 max-w-6xl mx-auto w-full px-4 py-6 space-y-5">
+      <!-- Debate header -->
+      <section class="border border-border bg-slate-950/80 rounded-2xl p-5 backdrop-blur shadow-neon-green/20">
+        <h2 id="debateTitle" class="text-lg font-semibold text-slate-50 mb-1">
+          Loading...
+        </h2>
+        <p id="debateDesc" class="text-xs text-slate-400 mb-3"></p>
+        <div id="stats"></div>
+      </section>
+
+      <!-- Two-column arguments -->
+      <section class="grid md:grid-cols-2 gap-5">
+        <!-- FOR -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-emerald-300 flex items-center gap-2">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              FOR Arguments
+            </h3>
+            <span class="text-[11px] text-emerald-200/80">
+              Supportive evidence & reasons
+            </span>
+          </div>
+
+          <ul id="forList" class="mb-2">
+            <!-- filled by JS -->
+          </ul>
+
+          <form id="addForForm"
+            class="border border-emerald-500/40 bg-slate-950/80 rounded-2xl p-4 space-y-3 text-xs backdrop-blur shadow-neon-green/40">
+            <p class="font-medium text-slate-100 flex items-center gap-2">
+              Add FOR Argument
+              <span class="text-[10px] text-emerald-300/80">pro side</span>
+            </p>
+            <div>
+              <label class="block text-[11px] text-slate-300 mb-1">Your name (optional)</label>
+              <input
+                name="authorName"
+                class="w-full bg-slate-900/80 border border-emerald-500/40 rounded-xl px-3 py-1.5 text-[11px] text-slate-100
+                       focus:outline-none focus:ring-2 focus:ring-emerald-500/80 focus:border-emerald-500/80"
+                placeholder="e.g. Proponent A"
+              />
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-300 mb-1">Argument</label>
+              <textarea
+                name="text"
+                rows="3"
+                class="w-full bg-slate-900/80 border border-emerald-500/40 rounded-xl px-3 py-1.5 text-[11px] text-slate-100
+                       focus:outline-none focus:ring-2 focus:ring-emerald-500/80 focus:border-emerald-500/80"
+                required
+              ></textarea>
+            </div>
+            <button
+              class="w-full bg-gradient-to-r from-emerald-500 to-lime-400 text-slate-950 font-semibold py-1.5 rounded-xl
+                     text-[11px] hover:shadow-neon-green transition-all">
+              Submit FOR
+            </button>
+          </form>
+        </div>
+
+        <!-- AGAINST -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-pink-300 flex items-center gap-2">
+              <span class="w-1.5 h-1.5 rounded-full bg-pink-400 animate-pulse"></span>
+              AGAINST Arguments
+            </h3>
+            <span class="text-[11px] text-pink-200/80">
+              Counterpoints & criticism
+            </span>
+          </div>
+
+          <ul id="againstList" class="mb-2">
+            <!-- filled by JS -->
+          </ul>
+
+          <form id="addAgainstForm"
+            class="border border-pink-500/40 bg-slate-950/80 rounded-2xl p-4 space-y-3 text-xs backdrop-blur shadow-neon-pink/40">
+            <p class="font-medium text-slate-100 flex items-center gap-2">
+              Add AGAINST Argument
+              <span class="text-[10px] text-pink-300/80">con side</span>
+            </p>
+            <div>
+              <label class="block text-[11px] text-slate-300 mb-1">Your name (optional)</label>
+              <input
+                name="authorName"
+                class="w-full bg-slate-900/80 border border-pink-500/40 rounded-xl px-3 py-1.5 text-[11px] text-slate-100
+                       focus:outline-none focus:ring-2 focus:ring-pink-500/80 focus:border-pink-500/80"
+                placeholder="e.g. Opponent B"
+              />
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-300 mb-1">Argument</label>
+              <textarea
+                name="text"
+                rows="3"
+                class="w-full bg-slate-900/80 border border-pink-500/40 rounded-xl px-3 py-1.5 text-[11px] text-slate-100
+                       focus:outline-none focus:ring-2 focus:ring-pink-500/80 focus:border-pink-500/80"
+                required
+              ></textarea>
+            </div>
+            <button
+              class="w-full bg-gradient-to-r from-pink-500 via-fuchsia-500 to-purple-500 text-slate-50 font-semibold py-1.5 rounded-xl
+                     text-[11px] hover:shadow-neon-pink transition-all">
+              Submit AGAINST
+            </button>
+          </form>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Digital Debate Analyzer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            background: '#020617',
+            card: '#020617',
+            border: 'rgba(148, 163, 184, 0.2)',
+            accent: '#22c55e',
+            accent2: '#38bdf8',
+          },
+          boxShadow: {
+            'neon-green': '0 0 25px rgba(34,197,94,0.45)',
+            'neon-cyan': '0 0 25px rgba(56,189,248,0.35)',
+          },
+          backdropBlur: {
+            xs: '2px',
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Shared auth helpers -->
+  <script src="./common.js" defer></script>
+
+  <!-- Page Logic -->
+  <script defer>
+    document.addEventListener('DOMContentLoaded', () => {
+      const loginForm = document.getElementById('loginForm');
+      const registerForm = document.getElementById('registerForm');
+      const logoutBtn = document.getElementById('logoutBtn');
+      const createDebateForm = document.getElementById('createDebateForm');
+      const debatesContainer = document.getElementById('debatesContainer');
+      const authSection = document.getElementById('authSection');
+      const appSection = document.getElementById('appSection');
+      const usernameBadge = document.getElementById('usernameBadge');
+
+      // === Helpers ===
+      function getUsernameFromToken() {
+        try {
+          const token = getToken();
+          if (!token) return null;
+          const payload = JSON.parse(atob(token.split('.')[1]));
+          return payload.username || null;
+        } catch {
+          return null;
+        }
+      }
+
+      function showApp() {
+        authSection.classList.add('hidden');
+        appSection.classList.remove('hidden');
+        logoutBtn.classList.remove('hidden');
+        const username = getUsernameFromToken();
+        if (username) {
+          usernameBadge.textContent = username;
+          usernameBadge.classList.remove('hidden');
+        }
+        loadDebates();
+      }
+
+      function showAuth() {
+        appSection.classList.add('hidden');
+        authSection.classList.remove('hidden');
+        logoutBtn.classList.add('hidden');
+        usernameBadge.classList.add('hidden');
+      }
+
+      // Initial screen
+      if (getToken()) {
+        showApp();
+      } else {
+        showAuth();
+      }
+
+      // === Auth Handlers ===
+      loginForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        const username = loginForm.username.value.trim();
+        const password = loginForm.password.value;
+
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setToken(data.token);
+          loginForm.reset();
+          showApp();
+        } else {
+          alert(data.message || 'Login failed');
+        }
+      });
+
+      registerForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        const username = registerForm.username.value.trim();
+        const password = registerForm.password.value;
+
+        const res = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          alert('Registered! Now login.');
+          registerForm.reset();
+        } else {
+          alert(data.message || 'Register failed');
+        }
+      });
+
+      logoutBtn.addEventListener('click', () => {
+        localStorage.removeItem('token');
+        showAuth();
+      });
+
+      // === Create Debate ===
+      createDebateForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        const title = createDebateForm.title.value.trim();
+        const description = createDebateForm.description.value.trim();
+
+        const res = await fetch('/api/debates', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ title, description })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          createDebateForm.reset();
+          loadDebates();
+        } else {
+          alert(data.message || 'Could not create debate');
+        }
+      });
+
+      // === Load Debates (Dashboard Cards) ===
+      async function loadDebates() {
+        debatesContainer.innerHTML = `
+          <div class="flex items-center gap-2 text-slate-400 text-sm">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            Loading debates...
+          </div>`;
+
+        const res = await fetch('/api/debates', { headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) {
+          debatesContainer.innerHTML =
+            '<p class="text-red-400 text-sm">Failed to load debates.</p>';
+          return;
+        }
+
+        if (!data.length) {
+          debatesContainer.innerHTML = `
+            <div class="text-sm text-slate-400">
+              No debates yet. <span class="text-emerald-400 font-semibold">Start the first one.</span>
+            </div>`;
+          return;
+        }
+
+        debatesContainer.innerHTML = '';
+
+        data.forEach((d, index) => {
+          const card = document.createElement('div');
+          card.className =
+            'group relative overflow-hidden border border-border/70 bg-slate-900/60 ' +
+            'rounded-2xl p-4 flex flex-col gap-3 backdrop-blur-xs ' +
+            'hover:border-emerald-500/80 hover:shadow-neon-green hover:-translate-y-0.5 ' +
+            'transition-all duration-300';
+
+          // Safe defaults if backend misses fields
+          const stats = {
+            for: d.stats?.for ?? 0,
+            against: d.stats?.against ?? 0,
+            forPoints: d.stats?.forPoints ?? d.stats?.for ?? 0,
+            againstPoints: d.stats?.againstPoints ?? d.stats?.against ?? 0,
+            participants: d.stats?.participants ?? 0,
+            winner: d.stats?.winner ?? 'DRAW'
+          };
+
+          const intensity =
+            stats.winner === 'FOR'
+              ? 'Pro-For'
+              : stats.winner === 'AGAINST'
+              ? 'Pro-Against'
+              : 'Neutral';
+
+          const chipColor =
+            intensity === 'Neutral'
+              ? 'bg-slate-700/80 text-slate-200'
+              : intensity === 'Pro-For'
+              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+              : 'bg-pink-500/20 text-pink-300 border border-pink-500/40';
+
+          card.innerHTML = `
+            <!-- top glow line -->
+            <div class="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-emerald-500/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+
+            <!-- header -->
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <h3 class="text-base font-semibold text-slate-100 tracking-tight flex items-center gap-2">
+                  <span class="inline-flex h-5 w-5 rounded-full border border-emerald-500/70 bg-slate-900/80 items-center justify-center text-[10px] text-emerald-300">
+                    ${index + 1}
+                  </span>
+                  ${d.title}
+                </h3>
+                <p class="text-[11px] text-slate-400 mt-1 line-clamp-2">
+                  ${d.description || ''}
+                </p>
+              </div>
+              <span class="text-[10px] px-2 py-1 rounded-full bg-slate-900/90 text-slate-300 border border-border/80">
+                ID: ${String(d._id).slice(-6)}
+              </span>
+            </div>
+
+            <!-- stats row -->
+            <div class="flex items-center justify-between text-[11px] text-slate-300 mt-2">
+              <div class="flex flex-wrap items-center gap-3">
+                <span class="flex items-center gap-1">
+                  <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                  For: <span class="font-semibold text-emerald-300">${stats.for}</span>
+                </span>
+                <span class="flex items-center gap-1">
+                  <span class="w-2 h-2 rounded-full bg-pink-400"></span>
+                  Against: <span class="font-semibold text-pink-300">${stats.against}</span>
+                </span>
+                <span class="flex items-center gap-1 text-slate-400">
+                  👥 <span class="font-semibold text-slate-200">${stats.participants}</span> participants
+                </span>
+              </div>
+
+              <span class="px-2 py-1 rounded-full text-[10px] ${chipColor}">
+                ${intensity}
+              </span>
+            </div>
+
+            <!-- points + winner row -->
+            <div class="flex flex-wrap items-center justify-between gap-2 mt-2 text-[10px]">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-900/80 border border-emerald-500/40 text-emerald-300">
+                  ⚡ For pts: <span class="font-semibold">${stats.forPoints}</span>
+                </span>
+                <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-900/80 border border-pink-500/40 text-pink-300">
+                  ⚡ Against pts: <span class="font-semibold">${stats.againstPoints}</span>
+                </span>
+              </div>
+
+              <span class="
+                inline-flex items-center gap-1 px-3 py-1 rounded-full border text-[10px]
+                ${stats.winner === 'FOR'
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-neon-green'
+                  : stats.winner === 'AGAINST'
+                  ? 'bg-pink-500/20 text-pink-300 border-pink-500/50 shadow-neon-green'
+                  : 'bg-slate-700/60 text-slate-200 border-slate-500/70'}
+              ">
+                🏆 Winner:
+                <span class="font-bold">
+                  ${stats.winner === 'FOR' ? 'FOR' : stats.winner === 'AGAINST' ? 'AGAINST' : 'DRAW'}
+                </span>
+              </span>
+            </div>
+
+            <!-- footer controls -->
+            <div class="flex items-center justify-between mt-3">
+              <button
+                class="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-slate-700/80 text-slate-200
+                       bg-slate-900/70 hover:bg-slate-800/90 hover:border-emerald-500/80 hover:shadow-neon-cyan
+                       hover:-translate-y-0.5 transition-all duration-300"
+                onclick="window.location.href='/debate.html?id=${d._id}'"
+              >
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                Open Matrix
+              </button>
+              <span class="text-[10px] text-slate-500 italic flex items-center gap-1">
+                <span class="w-1 h-1 rounded-full bg-slate-500"></span>
+                updated ${new Date(d.updatedAt || d.createdAt).toLocaleString()}
+              </span>
+            </div>
+          `;
+
+          debatesContainer.appendChild(card);
+        });
+      }
+    });
+  </script>
+</head>
+
+<body class="min-h-screen bg-background text-slate-100 relative overflow-x-hidden overflow-y-auto">
+
+  <div class="pointer-events-none fixed inset-0 opacity-40">
+    <div class="absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,#0f172a_1px,transparent_0)] [background-size:32px_32px]"></div>
+    <div class="absolute inset-0 bg-gradient-to-br from-emerald-500/10 via-sky-500/5 to-purple-500/10 mix-blend-screen"></div>
+  </div>
+
+  
+  <div class="relative z-10 flex flex-col min-h-screen">
+    <!-- Header -->
+    <header class="border-b border-border/70 bg-black/60 backdrop-blur">
+      <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <div class="relative">
+            <div class="h-9 w-9 rounded-xl bg-gradient-to-br from-emerald-500 to-sky-500 shadow-neon-green flex items-center justify-center">
+              <span class="text-xs font-black tracking-tight text-black/80">DA</span>
+            </div>
+            <div class="absolute -bottom-1 -right-1 h-3 w-3 rounded-full bg-emerald-500/90 border border-black animate-pulse"></div>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h1 class="text-sm sm:text-base font-semibold tracking-tight text-slate-50">
+                Digital Debate & Argument Analyzer
+              </h1>
+              <span class="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                live
+              </span>
+            </div>
+            <p class="text-[11px] text-slate-400">
+              Cyberpunk dashboard to track, compare & export arguments.
+            </p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <span id="usernameBadge"
+                class="hidden text-xs px-3 py-1.5 rounded-full bg-slate-900/80 border border-slate-700/80 text-slate-200">
+            user
+          </span>
+          <button id="logoutBtn"
+            class="hidden text-xs px-3 py-1.5 rounded-full border border-red-500/60 text-red-300 bg-red-500/10
+                   hover:bg-red-500/20 hover:shadow-neon-cyan transition-all">
+            Logout
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main -->
+    <main class="flex-1 max-w-6xl mx-auto w-full px-4 py-6">
+      <!-- Auth section -->
+      <section id="authSection" class="grid lg:grid-cols-2 gap-8 items-center">
+        <!-- Left: hero -->
+        <div class="space-y-5">
+          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border/80 bg-slate-950/80 text-[11px] text-slate-300">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            Secure · Self-hosted · Node + Mongo
+          </div>
+          <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-50">
+            Analyze debates like a<br />
+            <span class="bg-gradient-to-r from-emerald-400 via-cyan-400 to-purple-400 bg-clip-text text-transparent">
+              neon-lit control center.
+            </span>
+          </h2>
+          <p class="text-sm text-slate-400 max-w-md">
+            Log in or register to create debates, organize arguments
+            <span class="text-emerald-300">For</span> and
+            <span class="text-pink-300">Against</span>, and export everything to XML for processing.
+          </p>
+          <ul class="text-xs text-slate-400 space-y-1">
+            <li>• Dark neon UI optimized for focus</li>
+            <li>• Argument stats, points & winner detection</li>
+            <li>• One-click XML export for NLP / further analysis</li>
+          </ul>
+        </div>
+
+        <!-- Right: login/register cards -->
+        <div class="grid sm:grid-cols-2 gap-4">
+          <!-- Login -->
+          <div class="border border-border/80 bg-slate-950/90 rounded-2xl p-4 shadow-neon-cyan/40 backdrop-blur">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-sm font-semibold text-slate-100">Login</h3>
+              <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-slate-400 border border-border/70">
+                existing user
+              </span>
+            </div>
+            <form id="loginForm" class="space-y-3 text-xs">
+              <div>
+                <label class="block mb-1 text-slate-300">Username</label>
+                <input
+                  name="username"
+                  class="w-full bg-slate-900/80 border border-border/80 rounded-xl px-3 py-2 text-xs text-slate-100
+                         focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-emerald-500/70"
+                  required
+                />
+              </div>
+              <div>
+                <label class="block mb-1 text-slate-300">Password</label>
+                <input
+                  type="password"
+                  name="password"
+                  class="w-full bg-slate-900/80 border border-border/80 rounded-xl px-3 py-2 text-xs text-slate-100
+                         focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-emerald-500/70"
+                  required
+                />
+              </div>
+              <button
+                class="w-full mt-2 bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 text-xs font-semibold py-2 rounded-xl
+                       hover:shadow-neon-green hover:-translate-y-0.5 transition-all">
+                Enter Control Room
+              </button>
+            </form>
+          </div>
+
+          <!-- Register -->
+          <div class="border border-border/80 bg-slate-950/90 rounded-2xl p-4 backdrop-blur">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-sm font-semibold text-slate-100">Register</h3>
+              <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/40">
+                new operator
+              </span>
+            </div>
+            <form id="registerForm" class="space-y-3 text-xs">
+              <div>
+                <label class="block mb-1 text-slate-300">Username</label>
+                <input
+                  name="username"
+                  class="w-full bg-slate-900/80 border border-border/80 rounded-xl px-3 py-2 text-xs text-slate-100
+                         focus:outline-none focus:ring-2 focus:ring-cyan-500/70 focus:border-cyan-500/70"
+                  required
+                />
+              </div>
+              <div>
+                <label class="block mb-1 text-slate-300">Password</label>
+                <input
+                  type="password"
+                  name="password"
+                  class="w-full bg-slate-900/80 border border-border/80 rounded-xl px-3 py-2 text-xs text-slate-100
+                         focus:outline-none focus:ring-2 focus:ring-cyan-500/70 focus:border-cyan-500/70"
+                  required
+                />
+              </div>
+              <button
+                class="w-full mt-2 bg-slate-900 border border-cyan-500/70 text-cyan-300 text-xs font-semibold py-2 rounded-xl
+                       hover:bg-cyan-500/10 hover:shadow-neon-cyan hover:-translate-y-0.5 transition-all">
+                Create Access Key
+              </button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- App section -->
+      <section id="appSection" class="hidden space-y-6">
+        <!-- Create debate card -->
+        <div class="border border-border/80 bg-slate-950/90 rounded-2xl p-5 backdrop-blur shadow-neon-cyan/20">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <h2 class="text-sm font-semibold text-slate-100">Start New Debate</h2>
+              <p class="text-xs text-slate-400">
+                Define a topic and let arguments flow into the matrix.
+              </p>
+            </div>
+            <div class="flex items-center gap-1 text-[10px] text-slate-400">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              MongoDB linked
+            </div>
+          </div>
+          <form id="createDebateForm" class="space-y-3 text-xs">
+            <div class="grid sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block mb-1 text-slate-300">Topic Title</label>
+                <input
+                  name="title"
+                  class="w-full bg-slate-900/80 border border-border/80 rounded-xl px-3 py-2 text-xs text-slate-100
+                         focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-emerald-500/70"
+                  placeholder="Should AI be regulated?"
+                  required
+                />
+              </div>
+              <div>
+                <label class="block mb-1 text-slate-300">Short Context (optional)</label>
+                <input
+                  name="description"
+                  class="w-full bg-slate-900/80 border border-border/80 rounded-xl px-3 py-2 text-xs text-slate-100
+                         focus:outline-none focus:ring-2 focus:ring-cyan-500/70 focus:border-cyan-500/70"
+                  placeholder="Provide constraints, scenario, etc."
+                />
+              </div>
+            </div>
+            <button
+              class="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950
+                     text-xs font-semibold px-4 py-2 rounded-xl hover:shadow-neon-green hover:-translate-y-0.5 transition-all">
+              <span class="w-1.5 h-1.5 rounded-full bg-slate-950"></span>
+              Create Debate Node
+            </button>
+          </form>
+        </div>
+
+        <!-- Debate list -->
+        <div class="border border-border/80 bg-slate-950/90 rounded-2xl p-5 backdrop-blur">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold text-slate-100">Debate Dashboard</h2>
+            <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-slate-400 border border-border/70">
+              For vs Against · Points · Winner · XML ready
+            </span>
+          </div>
+          <div id="debatesContainer" class="space-y-3 text-sm text-slate-100">
+            <!-- filled by JS -->
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
